@@ -17,6 +17,24 @@ class DocumentAnalyzer:
             r'^([A-Z][A-Z\s]{3,})$',  # ALL CAPS headings
             r'^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*:)$',  # Title Case headings with colon
         ]
+        # Common regexes for type-specific extraction
+        self.invoice_patterns = {
+            'invoice_no': re.compile(r'(invoice\s*(?:no\.?|number)[:\-\s]*)([A-Z0-9\-]+)', re.IGNORECASE),
+            'date': re.compile(r'(date)[:\-\s]*([\d]{1,2}[\/\-\.\s][\d]{1,2}[\/\-\.\s][\d]{2,4})', re.IGNORECASE),
+            'total': re.compile(r'(total\s*amount|grand\s*total|total)[:\-\s]*([$€£]?\s?[\d\.,]+)', re.IGNORECASE),
+            'subtotal': re.compile(r'(subtotal)[:\-\s]*([$€£]?\s?[\d\.,]+)', re.IGNORECASE),
+            'tax': re.compile(r'(tax|vat)[:\-\s]*([$€£]?\s?[\d\.,]+)', re.IGNORECASE),
+            'currency': re.compile(r'([$€£])\s?[\d\.,]+')
+        }
+        self.academic_patterns = {
+            'title': re.compile(r'^(?:#\s*)?(.{5,120})$', re.MULTILINE),
+            'abstract': re.compile(r'\babstract\b[:\s\-]*\n?(.{50,2000})', re.IGNORECASE | re.DOTALL),
+            'authors': re.compile(r'by\s+([A-Z][A-Za-z\-\s,]+)\n', re.IGNORECASE),
+            'references': re.compile(r'(?:(?:references|bibliography)\s*\n)(.+)$', re.IGNORECASE | re.DOTALL)
+        }
+        self.form_patterns = {
+            'field_line': re.compile(r'^\s*([A-Za-z][A-Za-z0-9 _\-\/\.]{2,40})\s*[:\-]\s*(.+?)\s*$', re.MULTILINE)
+        }
     
     def detect_document_type(self, text: str, filename: str) -> str:
         """Detect document type based on content and filename"""
@@ -354,4 +372,142 @@ class DocumentAnalyzer:
             structured_json['content_sections'].append(extract_section_content(section))
         
         return structured_json
+
+    def create_type_aware_json(self,
+                               document_type: str,
+                               hierarchical_structure: Dict,
+                               tables: List[Dict],
+                               figures: List[Dict],
+                               full_text: str,
+                               metadata: Dict) -> Dict[str, Any]:
+        """
+        Create a type-aware structured JSON that augments the generic schema
+        with document-type-specific fields to improve AI training usability.
+        """
+        base = self.create_structured_json(
+            document_type=document_type,
+            hierarchical_structure=hierarchical_structure,
+            tables=tables,
+            figures=figures,
+            full_text=full_text,
+            metadata=metadata
+        )
+
+        text = full_text if full_text else ''
+        type_specific: Dict[str, Any] = {}
+
+        if document_type == 'invoice':
+            type_specific = self._extract_invoice_fields(text, tables)
+        elif document_type == 'academic_paper':
+            type_specific = self._extract_academic_fields(text, hierarchical_structure)
+        elif document_type == 'form':
+            type_specific = self._extract_form_fields(text)
+        elif document_type == 'report':
+            type_specific = self._extract_report_fields(hierarchical_structure, tables)
+        else:
+            # Generic enhancement: summarize top-level sections
+            type_specific = {
+                'main_sections': [s.get('heading') for s in (hierarchical_structure.get('sections', []) or []) if s.get('heading')]
+            }
+
+        base['type_specific'] = type_specific
+        return base
+
+    def _extract_invoice_fields(self, text: str, tables: List[Dict]) -> Dict[str, Any]:
+        """Heuristic extraction of common invoice fields and line items."""
+        def find_first(pattern):
+            m = pattern.search(text)
+            return (m.group(2) if m and m.lastindex and m.lastindex >= 2 else None)
+
+        currency = None
+        mcur = self.invoice_patterns['currency'].search(text)
+        if mcur:
+            symbol = mcur.group(1)
+            currency = {'$': 'USD', '€': 'EUR', '£': 'GBP'}.get(symbol, symbol)
+
+        # Try to infer line items from the largest table
+        line_items = []
+        table_like = None
+        if tables:
+            table_like = max(tables, key=lambda t: t.get('row_count', 0))
+            headers = [h.lower() for h in (table_like.get('headers') or [])]
+            for row in table_like.get('rows', []):
+                item = {}
+                if headers and len(row) == len(headers):
+                    for h, v in zip(headers, row):
+                        item[h] = v
+                else:
+                    # Fallback mapping
+                    if len(row) >= 1:
+                        item['description'] = row[0]
+                    if len(row) >= 2:
+                        item['quantity_or_unit'] = row[1]
+                    if len(row) >= 3:
+                        item['price_or_amount'] = row[2]
+                if item:
+                    line_items.append(item)
+
+        return {
+            'invoice_number': find_first(self.invoice_patterns['invoice_no']),
+            'invoice_date': find_first(self.invoice_patterns['date']),
+            'subtotal': find_first(self.invoice_patterns['subtotal']),
+            'tax': find_first(self.invoice_patterns['tax']),
+            'total': find_first(self.invoice_patterns['total']),
+            'currency': currency,
+            'line_items': line_items
+        }
+
+    def _extract_academic_fields(self, text: str, hierarchical_structure: Dict) -> Dict[str, Any]:
+        """Heuristic extraction for academic papers (title/authors/abstract/references)."""
+        title = hierarchical_structure.get('title') or None
+        if not title:
+            mtitle = self.academic_patterns['title'].search(text)
+            if mtitle:
+                title = mtitle.group(1).strip()
+
+        mauth = self.academic_patterns['authors'].search(text)
+        authors = []
+        if mauth:
+            candidates = [a.strip() for a in re.split(r',| and ', mauth.group(1)) if a.strip()]
+            authors = candidates[:12]
+
+        mabst = self.academic_patterns['abstract'].search(text)
+        abstract = mabst.group(1).strip() if mabst else None
+
+        mrefs = self.academic_patterns['references'].search(text)
+        references = []
+        if mrefs:
+            refs_text = mrefs.group(1).strip()
+            references = [r.strip() for r in re.split(r'\n\d+\.|\n\[\d+\]', '\n' + refs_text) if r.strip()]
+
+        return {
+            'title': title,
+            'authors': authors,
+            'abstract': abstract,
+            'references': references[:100]
+        }
+
+    def _extract_form_fields(self, text: str) -> Dict[str, Any]:
+        """Parse key: value pairs common in forms; returns list of detected fields."""
+        fields = []
+        for match in self.form_patterns['field_line'].finditer(text):
+            key = match.group(1).strip().lower().replace(' ', '_')
+            val = match.group(2).strip()
+            if key and val:
+                fields.append({'field': key, 'value': val})
+        return {
+            'fields': fields,
+            'field_count': len(fields)
+        }
+
+    def _extract_report_fields(self, hierarchical_structure: Dict, tables: List[Dict]) -> Dict[str, Any]:
+        """Basic signals for reports: executive summary presence, toc, appendix, table stats."""
+        headings = [s.get('heading', '').lower() for s in (hierarchical_structure.get('sections', []) or [])]
+        has_exec_summary = any('executive summary' in h for h in headings)
+        has_appendix = any('appendix' in h for h in headings)
+        return {
+            'has_executive_summary': has_exec_summary,
+            'has_appendix': has_appendix,
+            'table_count': sum(1 for _ in tables)
+        }
 

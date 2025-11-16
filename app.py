@@ -638,7 +638,8 @@ def ocr_endpoint():
         all_figures = analyzer.extract_figures(full_markdown, full_markdown)
         
         # Create training-ready structured JSON
-        training_json = analyzer.create_structured_json(
+        # Create type-aware structured JSON (augmented per document type)
+        training_json = analyzer.create_type_aware_json(
             document_type=document_type,
             hierarchical_structure=hierarchical_structure,
             tables=all_tables,
