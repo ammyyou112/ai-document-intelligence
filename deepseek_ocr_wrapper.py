@@ -291,9 +291,10 @@ class DeepSeekOCR:
         if prompt is None:
             if extract_structure:
                 # Use structure-aware prompt for markdown conversion (as per DeepSeek-OCR docs)
-                prompt = "<image>\n<|grounding|>Convert the document to markdown."
+                # Note: Adding trailing space as shown in example
+                prompt = "<image>\n<|grounding|>Convert the document to markdown. "
             else:
-                prompt = "<image>\nFree OCR."
+                prompt = "<image>\nFree OCR. "
         
         try:
             print(f"Processing image: {os.path.basename(image_path)}")
@@ -326,30 +327,58 @@ class DeepSeekOCR:
                         test_compress=False
                     )
                     print(f"   DEBUG: Inference result type: {type(result)}")
-                    print(f"   DEBUG: Inference result value: {result}")
+                    print(f"   DEBUG: Inference result value: {str(result)[:200] if result is not None else 'None'}")
                     
-                    # Check if output files were created (even if result is None)
+                    # Check if output files were created (even if result is None or "None")
                     output_files = []
                     if os.path.exists(temp_output_dir):
+                        print(f"   DEBUG: Checking output directory: {temp_output_dir}")
+                        # List all files in the directory
+                        all_files = []
                         for root, dirs, files in os.walk(temp_output_dir):
                             for file in files:
-                                if file.endswith(('.txt', '.md', '.json')):
-                                    output_files.append(os.path.join(root, file))
+                                file_path = os.path.join(root, file)
+                                all_files.append(file_path)
+                        print(f"   DEBUG: Found {len(all_files)} total files in output directory")
+                        
+                        # Check for common output file patterns
+                        for file_path in all_files:
+                            file_ext = os.path.splitext(file_path)[1].lower()
+                            file_name = os.path.basename(file_path).lower()
+                            # Accept text files, markdown, json, or any file that might contain output
+                            if (file_ext in ('.txt', '.md', '.json', '.html', '.xml') or 
+                                'output' in file_name or 'result' in file_name or 
+                                'ocr' in file_name or 'text' in file_name):
+                                output_files.append(file_path)
                     
                     if output_files:
-                        print(f"   DEBUG: Found {len(output_files)} output files: {output_files}")
-                        # Try to read text from output files
+                        print(f"   DEBUG: Found {len(output_files)} potential output files")
+                        # Try to read text from output files (prioritize .md and .txt)
+                        output_files.sort(key=lambda x: (x.endswith('.md'), x.endswith('.txt'), x.endswith('.json')))
                         for output_file in output_files:
                             try:
-                                with open(output_file, 'r', encoding='utf-8') as f:
+                                print(f"   DEBUG: Attempting to read: {output_file}")
+                                with open(output_file, 'r', encoding='utf-8', errors='ignore') as f:
                                     file_content = f.read()
-                                    if file_content and file_content.strip():
-                                        print(f"   DEBUG: Read content from {output_file}: {len(file_content)} chars")
-                                        if result is None or (isinstance(result, str) and result.strip() == ''):
+                                    if file_content and file_content.strip() and file_content.strip().lower() != 'none':
+                                        print(f"   DEBUG: Successfully read {len(file_content)} chars from {output_file}")
+                                        # Use file content if result is None, empty, or "None"
+                                        if (result is None or 
+                                            (isinstance(result, str) and (result.strip() == '' or result.strip().lower() == 'none'))):
                                             result = file_content
+                                            print(f"   DEBUG: Using content from file as result")
+                                            break
+                                        elif isinstance(result, str) and len(file_content) > len(result):
+                                            # File content is longer, prefer it
+                                            result = file_content
+                                            print(f"   DEBUG: File content is longer, using it")
                                             break
                             except Exception as read_err:
                                 print(f"   DEBUG: Could not read {output_file}: {read_err}")
+                    else:
+                        print(f"   DEBUG: No output files found in {temp_output_dir}")
+                        if os.path.exists(temp_output_dir):
+                            print(f"   DEBUG: Directory contents: {os.listdir(temp_output_dir)}")
                     
                     print("   OK: Inference completed")
                     
@@ -402,6 +431,28 @@ class DeepSeekOCR:
                 markdown_output = None
                 full_text = None
                 
+                # Try to decode if result is token IDs (tensor or list)
+                if result is not None:
+                    try:
+                        import torch
+                        if isinstance(result, torch.Tensor):
+                            # Decode token IDs to text
+                            print("   DEBUG: Result is a tensor, attempting to decode...")
+                            decoded = self.tokenizer.decode(result, skip_special_tokens=False)
+                            if decoded and decoded.strip() and decoded.strip().lower() != 'none':
+                                result = decoded
+                                print(f"   DEBUG: Decoded {len(decoded)} characters from tensor")
+                        elif isinstance(result, (list, tuple)) and len(result) > 0:
+                            # Might be token IDs as list
+                            if isinstance(result[0], int) or (hasattr(result[0], 'item') and callable(getattr(result[0], 'item', None))):
+                                print("   DEBUG: Result appears to be token IDs list, attempting to decode...")
+                                decoded = self.tokenizer.decode(result, skip_special_tokens=False)
+                                if decoded and decoded.strip() and decoded.strip().lower() != 'none':
+                                    result = decoded
+                                    print(f"   DEBUG: Decoded {len(decoded)} characters from list")
+                    except Exception as decode_err:
+                        print(f"   DEBUG: Could not decode result (might not be token IDs): {decode_err}")
+                
                 if result is None:
                     print("   WARNING: Model infer() returned None - checking for output files...")
                     full_text = ""  # Will be handled below
@@ -411,10 +462,15 @@ class DeepSeekOCR:
                     if not full_text:
                         full_text = str(result) if result else ""
                 elif isinstance(result, str):
-                    full_text = result
-                    # If extract_structure was used, the result is likely markdown
-                    if extract_structure:
-                        markdown_output = result
+                    # Handle the case where result is the string "None" (not Python None)
+                    if result.strip().lower() == 'none':
+                        print("   WARNING: Model returned string 'None' - treating as empty")
+                        full_text = ""
+                    else:
+                        full_text = result
+                        # If extract_structure was used, the result is likely markdown
+                        if extract_structure:
+                            markdown_output = result
                 elif hasattr(result, 'text'):
                     full_text = result.text
                     if hasattr(result, 'markdown'):
@@ -427,6 +483,10 @@ class DeepSeekOCR:
                     # Try to convert to string, but handle None properly
                     if result is not None:
                         full_text = str(result)
+                        # Check if it's the string "None"
+                        if full_text.strip().lower() == 'none':
+                            print("   WARNING: Result converted to string 'None' - treating as empty")
+                            full_text = ""
                     else:
                         full_text = ""
                 
@@ -434,13 +494,20 @@ class DeepSeekOCR:
                 if full_text is None:
                     full_text = ""
                 
+                # Final check: if full_text is "None" (string), treat as empty
+                if isinstance(full_text, str) and full_text.strip().lower() == 'none':
+                    print("   WARNING: Final check: full_text is 'None' string - treating as empty")
+                    full_text = ""
+                
                 # If markdown wasn't explicitly returned but structure extraction was used,
                 # treat the full_text as markdown
                 if extract_structure and markdown_output is None and full_text:
                     markdown_output = full_text
                 
-                if not full_text or len(full_text.strip()) == 0 or full_text.strip().lower() == 'none':
+                if not full_text or len(full_text.strip()) == 0:
                     print("   WARNING: No text extracted from image")
+                    print(f"   DEBUG: full_text value: {repr(full_text)}")
+                    print(f"   DEBUG: full_text type: {type(full_text)}")
                     full_text = ""  # Return empty string instead of raising error
                     markdown_output = ""
                     
