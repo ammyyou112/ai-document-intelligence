@@ -312,6 +312,8 @@ class DeepSeekOCR:
                 
                 try:
                     # Call infer method - output_path should be a directory string, not None
+                    # Note: Even with save_results=False, the model might save files, so we check for them
+                    print(f"   Calling model.infer() with output_path: {temp_output_dir}")
                     result = self.model.infer(
                         self.tokenizer,
                         prompt=prompt,
@@ -320,12 +322,38 @@ class DeepSeekOCR:
                         base_size=base_size,
                         image_size=image_size,
                         crop_mode=crop_mode,
-                        save_results=False,  # Don't save to disk
+                        save_results=True,  # Set to True to ensure we can read results from files if needed
                         test_compress=False
                     )
+                    print(f"   DEBUG: Inference result type: {type(result)}")
+                    print(f"   DEBUG: Inference result value: {result}")
+                    
+                    # Check if output files were created (even if result is None)
+                    output_files = []
+                    if os.path.exists(temp_output_dir):
+                        for root, dirs, files in os.walk(temp_output_dir):
+                            for file in files:
+                                if file.endswith(('.txt', '.md', '.json')):
+                                    output_files.append(os.path.join(root, file))
+                    
+                    if output_files:
+                        print(f"   DEBUG: Found {len(output_files)} output files: {output_files}")
+                        # Try to read text from output files
+                        for output_file in output_files:
+                            try:
+                                with open(output_file, 'r', encoding='utf-8') as f:
+                                    file_content = f.read()
+                                    if file_content and file_content.strip():
+                                        print(f"   DEBUG: Read content from {output_file}: {len(file_content)} chars")
+                                        if result is None or (isinstance(result, str) and result.strip() == ''):
+                                            result = file_content
+                                            break
+                            except Exception as read_err:
+                                print(f"   DEBUG: Could not read {output_file}: {read_err}")
+                    
                     print("   OK: Inference completed")
                     
-                    # Cleanup temp directory
+                    # Cleanup temp directory after reading
                     try:
                         shutil.rmtree(temp_output_dir, ignore_errors=True)
                     except:
@@ -372,9 +400,16 @@ class DeepSeekOCR:
                 # The infer method may return different formats
                 print("   Extracting text from result...")
                 markdown_output = None
-                if isinstance(result, dict):
-                    full_text = result.get('text', result.get('output', result.get('result', str(result))))
+                full_text = None
+                
+                if result is None:
+                    print("   WARNING: Model infer() returned None - checking for output files...")
+                    full_text = ""  # Will be handled below
+                elif isinstance(result, dict):
+                    full_text = result.get('text', result.get('output', result.get('result', '')))
                     markdown_output = result.get('markdown', result.get('md', None))
+                    if not full_text:
+                        full_text = str(result) if result else ""
                 elif isinstance(result, str):
                     full_text = result
                     # If extract_structure was used, the result is likely markdown
@@ -389,14 +424,22 @@ class DeepSeekOCR:
                 elif hasattr(result, 'result'):
                     full_text = result.result
                 else:
-                    full_text = str(result)
+                    # Try to convert to string, but handle None properly
+                    if result is not None:
+                        full_text = str(result)
+                    else:
+                        full_text = ""
+                
+                # Ensure full_text is not None
+                if full_text is None:
+                    full_text = ""
                 
                 # If markdown wasn't explicitly returned but structure extraction was used,
                 # treat the full_text as markdown
-                if extract_structure and markdown_output is None:
+                if extract_structure and markdown_output is None and full_text:
                     markdown_output = full_text
                 
-                if not full_text or len(full_text.strip()) == 0:
+                if not full_text or len(full_text.strip()) == 0 or full_text.strip().lower() == 'none':
                     print("   WARNING: No text extracted from image")
                     full_text = ""  # Return empty string instead of raising error
                     markdown_output = ""
