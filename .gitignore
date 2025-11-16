@@ -72,6 +72,9 @@ uploads/
 ## Node (if any)
 node_modules/
 
+## Embedded upstream repo (ignored to avoid nested git)
+
+
 # Python
 __pycache__/
 *.py[cod]
