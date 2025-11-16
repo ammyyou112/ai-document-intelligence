@@ -1,0 +1,132 @@
+## Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+## Virtual environments
+.venv/
+venv/
+ENV/
+env/
+pythonenv*/
+
+## IDE
+.vscode/
+.idea/
+*.code-workspace
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Environment files
+.env
+.env.*
+!.env.example
+config.env
+
+## Logs and runtime
+*.log
+app_output.log
+
+## Project outputs/uploads (large/generated)
+outputs/
+uploads/
+
+## Caches
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+## Notebooks
+.ipynb_checkpoints/
+
+## Model/data caches
+~/.cache/
+~/.huggingface/
+**/huggingface/
+**/.huggingface/
+**/models--*/
+
+## Node (if any)
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Flask
+instance/
+.webassets-cache
+
+# Uploads and outputs
+uploads/
+outputs/
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.tiff
+*.bmp
+*_processed.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+

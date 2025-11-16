@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Document OCR - Intelligent Document Processing</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .upload-section {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 60px 20px;
+            text-align: center;
+            background: #f8f9fa;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .upload-section:hover {
+            border-color: #764ba2;
+            background: #f0f0f0;
+        }
+
+        .upload-section.dragover {
+            border-color: #764ba2;
+            background: #e8e8e8;
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 4em;
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .upload-section h2 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .upload-section p {
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.1em;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .file-info {
+            margin-top: 20px;
+            padding: 20px;
+            background: #e8f4f8;
+            border-radius: 10px;
+            display: none;
+        }
+
+        .file-info.show {
+            display: block;
+        }
+
+        .file-info h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .file-info p {
+            color: #666;
+            margin: 5px 0;
+        }
+
+        .progress-section {
+            margin-top: 30px;
+            display: none;
+        }
+
+        .progress-section.show {
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .results-section {
+            margin-top: 30px;
+            display: none;
+        }
+
+        .results-section.show {
+            display: block;
+        }
+
+        .results-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .results-card h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .stat-item .stat-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .stat-item .stat-value {
+            color: #667eea;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+
+        .download-buttons {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+
+        .btn-download {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-size: 1em;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-download:hover {
+            background: #218838;
+            transform: translateY(-2px);
+        }
+
+        .preview-section {
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .preview-section h4 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .preview-text {
+            color: #555;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .supported-formats {
+            margin-top: 20px;
+            padding: 15px;
+            background: #fff3cd;
+            border-radius: 8px;
+            border-left: 4px solid #ffc107;
+        }
+
+        .supported-formats h4 {
+            color: #856404;
+            margin-bottom: 10px;
+        }
+
+        .supported-formats ul {
+            list-style: none;
+            color: #856404;
+        }
+
+        .supported-formats li {
+            display: inline-block;
+            margin: 5px 10px;
+            padding: 5px 10px;
+            background: white;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AI Document OCR</h1>
+            <p>Intelligent Document Processing for AI Training</p>
+        </div>
+
+        <div class="content">
+            <div class="upload-section" id="uploadSection">
+                <div class="upload-icon">📄</div>
+                <h2>Upload Your Document</h2>
+                <p>Drag and drop your document here or click to browse</p>
+                <p style="font-size: 0.9em; color: #999;">Supports PDF, PNG, JPG, JPEG, TIFF, BMP</p>
+                <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.tiff,.bmp">
+                <button class="btn" onclick="document.getElementById('fileInput').click()">
+                    Choose File
+                </button>
+            </div>
+
+            <div class="supported-formats">
+                <h4>Supported Formats:</h4>
+                <ul>
+                    <li>📄 PDF</li>
+                    <li>🖼️ PNG</li>
+                    <li>🖼️ JPG/JPEG</li>
+                    <li>🖼️ TIFF</li>
+                    <li>🖼️ BMP</li>
+                </ul>
+            </div>
+
+            <div class="file-info" id="fileInfo">
+                <h3>Selected File:</h3>
+                <p id="fileName"></p>
+                <p id="fileSize"></p>
+                <button class="btn" id="processBtn" onclick="processDocument()">
+                    Process Document
+                </button>
+            </div>
+
+            <div class="progress-section" id="progressSection">
+                <h3>Processing Document...</h3>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill">0%</div>
+                </div>
+                <div class="loading-spinner"></div>
+                <p style="text-align: center; color: #666;">This may take a few moments...</p>
+            </div>
+
+            <div class="error-message" id="errorMessage"></div>
+
+            <div class="results-section" id="resultsSection">
+                <div class="results-card">
+                    <h3>📊 Processing Results</h3>
+                    <div class="stats" id="stats">
+                        <!-- Stats will be populated here -->
+                    </div>
+
+                    <div class="download-buttons">
+                        <a href="#" class="btn-download" id="downloadJson" download>
+                            📥 Download JSON
+                        </a>
+                        <a href="#" class="btn-download" id="downloadTxt" download>
+                            📥 Download TXT
+                        </a>
+                    </div>
+
+                    <div class="preview-section">
+                        <h4>📝 Extracted Text Preview</h4>
+                        <div class="preview-text" id="previewText"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentDocumentId = null;
+        let selectedFile = null;
+
+        // File input handler
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            handleFileSelect(e.target.files[0]);
+        });
+
+        // Drag and drop handlers
+        const uploadSection = document.getElementById('uploadSection');
+        
+        uploadSection.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            uploadSection.classList.add('dragover');
+        });
+
+        uploadSection.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+        });
+
+        uploadSection.addEventListener('drop', function(e) {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) {
+                handleFileSelect(file);
+            }
+        });
+
+        function handleFileSelect(file) {
+            if (!file) return;
+
+            selectedFile = file;
+            document.getElementById('fileName').textContent = `Name: ${file.name}`;
+            document.getElementById('fileSize').textContent = `Size: ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+            document.getElementById('fileInfo').classList.add('show');
+            document.getElementById('resultsSection').classList.remove('show');
+            document.getElementById('errorMessage').classList.remove('show');
+        }
+
+        async function processDocument() {
+            if (!selectedFile) {
+                showError('Please select a file first');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            // Show progress
+            const progressSection = document.getElementById('progressSection');
+            const progressFill = document.getElementById('progressFill');
+            const progressText = progressSection.querySelector('p');
+            
+            progressSection.classList.add('show');
+            document.getElementById('resultsSection').classList.remove('show');
+            document.getElementById('errorMessage').classList.remove('show');
+            document.getElementById('processBtn').disabled = true;
+
+            // Improved progress simulation with status messages
+            let progress = 0;
+            let statusMessages = [
+                'Uploading file...',
+                'Preparing document...',
+                'Initializing OCR engine...',
+                'Processing document...',
+                'Extracting text...',
+                'Analyzing structure...',
+                'Finalizing results...'
+            ];
+            let statusIndex = 0;
+            
+            const progressInterval = setInterval(() => {
+                progress += 5;
+                if (progress < 85) {
+                    progressFill.style.width = progress + '%';
+                    progressFill.textContent = progress + '%';
+                    
+                    // Update status message every 15%
+                    if (progress % 15 === 0 && statusIndex < statusMessages.length - 1) {
+                        statusIndex++;
+                        if (progressText) {
+                            progressText.textContent = statusMessages[statusIndex] + ' This may take a few moments...';
+                        }
+                    }
+                } else if (progress < 95) {
+                    // Slow down near the end
+                    progressFill.style.width = progress + '%';
+                    progressFill.textContent = progress + '%';
+                    if (progressText) {
+                        progressText.textContent = 'Almost done... Please wait...';
+                    }
+                }
+            }, 800);
+
+            // Create AbortController for timeout
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => {
+                controller.abort();
+            }, 600000); // 10 minutes timeout (for model download/initialization)
+
+            try {
+                const response = await fetch('/api/ocr', {
+                    method: 'POST',
+                    body: formData,
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+                clearInterval(progressInterval);
+                progressFill.style.width = '100%';
+                progressFill.textContent = '100%';
+                if (progressText) {
+                    progressText.textContent = 'Complete!';
+                }
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Processing failed');
+                }
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    currentDocumentId = result.document_id;
+                    displayResults(result.result);
+                } else {
+                    throw new Error('Processing failed');
+                }
+            } catch (error) {
+                clearTimeout(timeoutId);
+                clearInterval(progressInterval);
+                
+                if (error.name === 'AbortError') {
+                    showError('Request timed out. The document may be too large or the OCR model is taking too long to initialize. Please try again or use a smaller file.');
+                } else {
+                    showError(error.message || 'An error occurred while processing the document');
+                }
+            } finally {
+                progressSection.classList.remove('show');
+                document.getElementById('processBtn').disabled = false;
+            }
+        }
+
+        function displayResults(result) {
+            // Update stats
+            const statsHtml = `
+                <div class="stat-item">
+                    <div class="stat-label">Total Pages</div>
+                    <div class="stat-value">${result.metadata.total_pages}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Total Words</div>
+                    <div class="stat-value">${result.full_document_text.split(/\s+/).filter(w => w).length}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Headers</div>
+                    <div class="stat-value">${result.full_document_structure.headers.length}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Paragraphs</div>
+                    <div class="stat-value">${result.full_document_structure.paragraphs.length}</div>
+                </div>
+            `;
+            document.getElementById('stats').innerHTML = statsHtml;
+
+            // Update preview text
+            const previewText = result.full_document_text.substring(0, 2000);
+            document.getElementById('previewText').textContent = 
+                previewText + (result.full_document_text.length > 2000 ? '...' : '');
+
+            // Update download links
+            document.getElementById('downloadJson').href = `/api/download/json/${currentDocumentId}`;
+            document.getElementById('downloadTxt').href = `/api/download/txt/${currentDocumentId}`;
+
+            // Show results
+            document.getElementById('resultsSection').classList.add('show');
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorMessage').classList.add('show');
+        }
+
+        // Check health on load
+        fetch('/api/health')
+            .then(response => response.json())
+            .then(data => {
+                console.log('Server health:', data);
+            })
+            .catch(error => {
+                console.error('Health check failed:', error);
+            });
+    </script>
+</body>
+</html>
+
