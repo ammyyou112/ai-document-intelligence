@@ -19,6 +19,18 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Configure logging
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('app_output.log', encoding='utf-8')
+    ]
+)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 CORS(app)
 
@@ -121,6 +133,37 @@ print(f"OCR Engine: {OCR_ENGINE}")
 print(f"Local Model: {'OK: Available' if deepseek_ocr_model else 'ERROR: Not Available'}")
 print(f"API Key: {'OK: Configured' if DEEPSEEK_API_KEY else 'WARNING: Not Configured (optional)'}")
 print("=" * 60)
+print()
+
+# Initialize Enhanced OCR Pipeline
+enhanced_pipeline = None
+try:
+    from app.processors.enhanced_ocr_pipeline import EnhancedOCRPipeline
+    print("Initializing Enhanced OCR Pipeline...")
+    
+    # Create processor function for DeepSeek
+    def deepseek_processor(image_path: str):
+        """Wrapper for DeepSeek OCR processing"""
+        global deepseek_ocr_model
+        if deepseek_ocr_model is None:
+            from deepseek_ocr_wrapper import DeepSeekOCR
+            deepseek_ocr_model = DeepSeekOCR()
+        return deepseek_ocr_model.process(image_path)
+    
+    enhanced_pipeline = EnhancedOCRPipeline(
+        deepseek_processor=deepseek_processor if OCR_ENGINE in ['deepseek-local', 'deepseek-local-vllm'] else None,
+        complexity_threshold=0.7,
+        pdf_dpi=300
+    )
+    print("OK: Enhanced OCR Pipeline initialized")
+except ImportError as e:
+    print(f"WARNING: Enhanced OCR Pipeline not available: {e}")
+    print("WARNING: Falling back to basic OCR processing")
+    enhanced_pipeline = None
+except Exception as e:
+    print(f"WARNING: Failed to initialize Enhanced OCR Pipeline: {e}")
+    enhanced_pipeline = None
+
 print()
 
 def allowed_file(filename):
@@ -506,6 +549,7 @@ def health():
         'ocr_engine': OCR_ENGINE,
         'has_local_model': deepseek_ocr_model is not None,
         'has_api_key': bool(DEEPSEEK_API_KEY),
+        'has_enhanced_pipeline': enhanced_pipeline is not None,
         'recommended_method': 'local' if deepseek_ocr_model else 'api' if DEEPSEEK_API_KEY else 'none',
         'message': 'Ready' if OCR_ENGINE != 'none' else 'Please install DeepSeek-OCR locally',
         'timestamp': datetime.now().isoformat()
@@ -513,40 +557,108 @@ def health():
 
 @app.route('/api/ocr', methods=['POST'])
 def ocr_endpoint():
+    """Enhanced OCR endpoint using Enhanced OCR Pipeline"""
     try:
-        print(f"\n{'='*60}")
-        print(f"New OCR request received")
-        print(f"{'='*60}")
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info("=" * 60)
+        logger.info("New OCR request received")
+        logger.info("=" * 60)
         
         if 'file' not in request.files:
+            logger.error("No file provided in request")
             return jsonify({'error': 'No file provided'}), 400
         
         file = request.files['file']
         if file.filename == '':
+            logger.error("No file selected")
             return jsonify({'error': 'No file selected'}), 400
         
         if not allowed_file(file.filename):
+            logger.error(f"File type not allowed: {file.filename}")
             return jsonify({'error': 'File type not allowed'}), 400
         
         # Save uploaded file
         filename = secure_filename(file.filename)
         unique_filename = f"{uuid.uuid4()}_{filename}"
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-        print(f"Saving uploaded file: {filename} ({file.content_length / 1024 / 1024:.2f} MB)")
+        logger.info(f"Saving uploaded file: {filename} ({file.content_length / 1024 / 1024:.2f} MB)")
         file.save(file_path)
-        print(f"OK: File saved: {file_path}")
+        logger.info(f"File saved: {file_path}")
+        
+        # Use Enhanced Pipeline if available, otherwise fallback to basic processing
+        if enhanced_pipeline is not None:
+            logger.info("Using Enhanced OCR Pipeline...")
+            try:
+                # Process document with enhanced pipeline
+                result = enhanced_pipeline.process_document(file_path, filename)
+                
+                # Generate output files
+                output_id = result['document_metadata']['document_id']
+                
+                # Save comprehensive JSON
+                json_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{output_id}.json')
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, indent=2, ensure_ascii=False)
+                logger.info(f"JSON saved: {json_path}")
+                
+                # Save TXT file
+                txt_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{output_id}.txt')
+                with open(txt_path, 'w', encoding='utf-8') as f:
+                    f.write(f"Document: {filename}\n")
+                    f.write(f"Processing Date: {result['document_metadata']['processed_date']}\n")
+                    f.write(f"Document Type: {result['document_metadata']['type']}\n")
+                    f.write(f"Engines Used: {', '.join(result['document_metadata']['engines_used'])}\n")
+                    f.write(f"Total Pages: {result['document_metadata']['total_pages']}\n")
+                    f.write(f"Total Words: {result['content_metadata']['words']}\n")
+                    f.write("=" * 80 + "\n\n")
+                    
+                    # Write page texts
+                    for page in result['pages']:
+                        f.write(f"\n--- Page {page['page_number']} ---\n\n")
+                        f.write(page['text'])
+                        f.write("\n")
+                
+                logger.info(f"TXT saved: {txt_path}")
+                
+                # Cleanup uploaded file
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                except:
+                    pass
+                
+                logger.info("OCR processing completed successfully!")
+                logger.info("=" * 60)
+                
+                return jsonify({
+                    'success': True,
+                    'document_id': output_id,
+                    'result': result,
+                    'download_json': f'/api/download/json/{output_id}',
+                    'download_txt': f'/api/download/txt/{output_id}'
+                })
+                
+            except Exception as pipeline_error:
+                logger.error(f"Enhanced pipeline error: {pipeline_error}", exc_info=True)
+                # Fall through to basic processing
+                logger.warning("Falling back to basic OCR processing...")
+        
+        # Fallback to basic processing
+        logger.info("Using basic OCR processing (fallback)...")
         
         # Process file
         image_paths = []
         if filename.lower().endswith('.pdf'):
-            print(f"Converting PDF to images...")
+            logger.info("Converting PDF to images...")
             image_paths = pdf_to_images(file_path)
-            print(f"OK: Converted to {len(image_paths)} image(s)")
+            logger.info(f"Converted to {len(image_paths)} image(s)")
         else:
             image_paths = [file_path]
-            print(f"Processing image file...")
+            logger.info("Processing image file...")
         
-        # Process each image
+        # Process each image with basic OCR
         all_results = {
             'document_id': str(uuid.uuid4()),
             'filename': filename,
@@ -566,23 +678,14 @@ def ocr_endpoint():
         }
         
         for page_num, image_path in enumerate(image_paths, 1):
-            print(f"\nProcessing page {page_num}/{len(image_paths)}...")
-            print(f"   OCR Engine: {OCR_ENGINE}")
+            logger.info(f"Processing page {page_num}/{len(image_paths)}...")
             
             try:
-                # Extract text using DeepSeek OCR
-                print(f"   Extracting text with DeepSeek OCR...")
-                if OCR_ENGINE == 'deepseek-local' and deepseek_ocr_model is None:
-                    print(f"   WARNING: Model not initialized - will initialize now (this may take time)...")
-                
                 page_data = extract_text_deepseek(image_path)
-                print(f"   OK: Text extracted: {len(page_data.get('full_text', ''))} characters")
+                logger.info(f"Text extracted: {len(page_data.get('full_text', ''))} characters")
                 
-                # Detect structure using markdown output if available
-                print(f"   Detecting document structure...")
                 markdown_text = page_data.get('markdown_output', page_data.get('full_text', ''))
                 page_structure = detect_document_structure(page_data['structured_data'], markdown_text=markdown_text)
-                print(f"   OK: Structure detected: {len(page_structure['headers'])} headers, {len(page_structure['paragraphs'])} paragraphs, {len(page_structure.get('tables', []))} tables, {len(page_structure.get('figures', []))} figures")
                 
                 page_result = {
                     'page_number': page_num,
@@ -596,90 +699,16 @@ def ocr_endpoint():
                 all_results['pages'].append(page_result)
                 all_results['full_document_text'] += f"\n\n--- Page {page_num} ---\n\n" + page_data['full_text']
                 
-                # Merge structures
-                all_results['full_document_structure']['headers'].extend(page_structure['headers'])
-                all_results['full_document_structure']['paragraphs'].extend(page_structure['paragraphs'])
-                all_results['full_document_structure']['lists'].extend(page_structure['lists'])
-                
-                # Add tables and figures
-                if 'tables' not in all_results['full_document_structure']:
-                    all_results['full_document_structure']['tables'] = []
-                if 'figures' not in all_results['full_document_structure']:
-                    all_results['full_document_structure']['figures'] = []
-                
-                all_results['full_document_structure']['tables'].extend(page_structure.get('tables', []))
-                all_results['full_document_structure']['figures'].extend(page_structure.get('figures', []))
-                
             except Exception as page_error:
-                error_msg = str(page_error)
-                print(f"   ERROR: Error processing page {page_num}: {error_msg}")
-                raise Exception(f"Error processing page {page_num}: {error_msg}")
+                logger.error(f"Error processing page {page_num}: {page_error}", exc_info=True)
+                raise Exception(f"Error processing page {page_num}: {str(page_error)}")
         
-        print(f"\nCreating comprehensive structured JSON for AI training...")
-        # Create comprehensive structured JSON using DocumentAnalyzer
-        from document_analyzer import DocumentAnalyzer
-        analyzer = DocumentAnalyzer()
-        
-        # Detect document type
-        document_type = analyzer.detect_document_type(all_results['full_document_text'], filename)
-        print(f"   Document type detected: {document_type}")
-        
-        # Extract comprehensive structure from full document
-        # Collect markdown from all pages (prefer markdown over plain text)
-        markdown_parts = []
-        for page in all_results['pages']:
-            page_markdown = page.get('markdown', page.get('text', ''))
-            markdown_parts.append(page_markdown)
-        
-        full_markdown = '\n\n'.join(markdown_parts) if markdown_parts else all_results['full_document_text']
-        
-        hierarchical_structure = analyzer.extract_hierarchical_structure(full_markdown)
-        all_tables = analyzer.extract_tables(full_markdown)
-        all_figures = analyzer.extract_figures(full_markdown, full_markdown)
-        
-        # Create training-ready structured JSON
-        # Create type-aware structured JSON (augmented per document type)
-        training_json = analyzer.create_type_aware_json(
-            document_type=document_type,
-            hierarchical_structure=hierarchical_structure,
-            tables=all_tables,
-            figures=all_figures,
-            full_text=all_results['full_document_text'],
-            metadata=all_results['metadata']
-        )
-        
-        # Add to results
-        all_results['document_type'] = document_type
-        all_results['training_json'] = training_json
-        all_results['comprehensive_structure'] = {
-            'hierarchical': hierarchical_structure,
-            'tables': all_tables,
-            'figures': all_figures
-        }
-        
-        print(f"   OK: Structured JSON created")
-        print(f"      - Document type: {document_type}")
-        print(f"      - Sections: {len(hierarchical_structure.get('sections', []))}")
-        print(f"      - Tables: {len(all_tables)}")
-        print(f"      - Figures: {len(all_figures)}")
-        
-        print(f"\nSaving results...")
         # Generate output files
         output_id = all_results['document_id']
-        
-        # Save comprehensive JSON (for AI training)
         json_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{output_id}.json')
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(all_results, f, indent=2, ensure_ascii=False)
-        print(f"   OK: JSON saved: {json_path}")
         
-        # Save training-ready JSON (simplified structure)
-        training_json_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{output_id}_training.json')
-        with open(training_json_path, 'w', encoding='utf-8') as f:
-            json.dump(training_json, f, indent=2, ensure_ascii=False)
-        print(f"   OK: Training JSON saved: {training_json_path}")
-        
-        # Save TXT
         txt_path = os.path.join(app.config['OUTPUT_FOLDER'], f'{output_id}.txt')
         with open(txt_path, 'w', encoding='utf-8') as f:
             f.write(f"Document: {filename}\n")
@@ -688,9 +717,8 @@ def ocr_endpoint():
             f.write(f"Total Pages: {all_results['metadata']['total_pages']}\n")
             f.write("=" * 80 + "\n\n")
             f.write(all_results['full_document_text'])
-        print(f"   OK: TXT saved: {txt_path}")
         
-        # Cleanup processed images
+        # Cleanup
         for path in image_paths:
             if path != file_path and os.path.exists(path):
                 try:
@@ -698,8 +726,7 @@ def ocr_endpoint():
                 except:
                     pass
         
-        print(f"OK: OCR processing completed successfully!")
-        print(f"{'='*60}\n")
+        logger.info("Basic OCR processing completed")
         
         return jsonify({
             'success': True,
@@ -711,8 +738,7 @@ def ocr_endpoint():
     
     except Exception as e:
         error_msg = str(e)
-        print(f"\nERROR: OCR Error: {error_msg}")
-        print(f"{'='*60}\n")
+        logger.error(f"OCR Error: {error_msg}", exc_info=True)
         import traceback
         traceback.print_exc()
         return jsonify({'error': error_msg}), 500

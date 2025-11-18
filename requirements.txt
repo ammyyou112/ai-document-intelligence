@@ -16,4 +16,5 @@ addict>=2.4.0
 matplotlib>=3.7.0
 easydict>=1.9
 einops>=0.7.0
+easyocr>=1.7.0
 
