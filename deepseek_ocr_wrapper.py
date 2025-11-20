@@ -943,6 +943,16 @@ class DeepSeekOCR:
                 ]
                 print("   ⚠️  WARNING: Using text-only extraction (no bboxes available)")
             
+            # Extract lines for metadata (from structured_data or full_text)
+            if structured_data:
+                # Extract lines from structured_data
+                lines = [item.get('text', '') for item in structured_data if item.get('text')]
+            elif full_text:
+                # Extract lines from full_text
+                lines = [line.strip() for line in full_text.split('\n') if line.strip()]
+            else:
+                lines = []
+            
             # Validate bboxes and log statistics
             valid_bboxes = sum(1 for item in structured_data if item['bbox'] != [0, 0, 0, 0])
             total_blocks = len(structured_data)
