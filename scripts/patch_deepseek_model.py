@@ -1,6 +1,30 @@
 """
 Patch script to fix LlamaFlashAttention2 import error in DeepSeek-OCR model
-This patches the downloaded model code to work with newer transformers versions
+
+PURPOSE:
+    This script patches the DeepSeek-OCR model code in the HuggingFace cache
+    to fix compatibility issues with newer transformers library versions.
+    
+    The DeepSeek-OCR model code sometimes imports LlamaFlashAttention2 which
+    may not be available in all transformers versions. This patch adds a
+    try/except fallback to use LlamaAttention instead.
+
+USAGE:
+    This script is automatically called by deepseek_ocr_wrapper.py during
+    model initialization. You can also run it manually:
+    
+        python scripts/patch_deepseek_model.py
+    
+    It will find and patch the cached model files in:
+        ~/.cache/huggingface/hub/models--deepseek-ai--DeepSeek-OCR/
+
+STATUS:
+    Permanent utility - Required for compatibility with some transformers versions.
+    The patch is applied automatically when the model is loaded.
+
+NOTE:
+    This modifies files in your HuggingFace cache. The changes are safe and
+    only affect the local cached copy of the model.
 """
 import os
 import sys

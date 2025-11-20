@@ -48,6 +48,7 @@ config.env
 ## Logs and runtime
 *.log
 app_output.log
+logs/*.log
 
 ## Project outputs/uploads (large/generated)
 outputs/
@@ -132,4 +133,14 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Archive and backup files
+archive/
+backup-*.tar.gz
+
+# Examples cache
+examples/__pycache__/
+
+# Scripts cache
+scripts/__pycache__/
 

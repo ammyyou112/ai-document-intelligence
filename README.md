@@ -256,14 +256,76 @@ You can modify the following settings in `app.py`:
 
 ```
 Deepseek-OCR/
-├── app.py                 # Flask application
-├── requirements.txt       # Python dependencies
-├── README.md             # Documentation
-├── templates/
-│   └── index.html        # Web interface
-├── uploads/              # Uploaded files (created automatically)
-└── outputs/              # Output files (created automatically)
+├── app/                          # Main application package
+│   ├── analyzers/                # Document analysis components
+│   │   └── document_complexity_analyzer.py
+│   ├── processors/               # OCR processors and intelligence
+│   │   ├── simple_ocr_engine.py
+│   │   ├── hybrid_ocr_router.py
+│   │   ├── document_classifier.py
+│   │   ├── metadata_extractor.py
+│   │   ├── research_paper_structurer.py
+│   │   └── enhanced_ocr_pipeline.py
+│   └── README_*.md              # Component documentation
+│
+├── archive/                      # Legacy code (deprecated)
+│   └── document_analyzer.py
+│
+├── examples/                     # Example scripts
+│   ├── example_basic_ocr.py
+│   ├── example_hybrid_usage.py
+│   ├── example_document_intelligence.py
+│   └── example_full_integration.py
+│
+├── scripts/                      # Helper scripts
+│   ├── run_app.py
+│   ├── start.sh / start.bat
+│   ├── setup_check.py
+│   ├── fix_tokenizer.py
+│   └── patch_deepseek_model.py
+│
+├── templates/                    # Flask templates
+│   └── index.html
+│
+├── uploads/                      # User uploads (git-ignored)
+├── outputs/                      # Generated results (git-ignored)
+│
+├── DeepSeek-OCR/                 # Upstream repository (git submodule)
+│
+├── app.py                        # Main Flask application
+├── deepseek_ocr_wrapper.py       # DeepSeek-OCR model wrapper
+├── requirements.txt              # Python dependencies
+└── config.example.env            # Configuration template
 ```
+
+### Directory Descriptions
+
+**`app/`** - Main application package
+- `analyzers/` - Document complexity analysis using OpenCV
+- `processors/` - OCR engines and document intelligence features
+  - Hybrid OCR routing (EasyOCR + DeepSeek-OCR)
+  - Document classification (5 types)
+  - Metadata extraction
+  - Research paper structuring
+  - Enhanced processing pipeline
+
+**`examples/`** - Example scripts demonstrating usage
+- Basic OCR processing
+- Hybrid routing
+- Document intelligence
+- Full pipeline integration
+
+**`scripts/`** - Utility scripts
+- Application launchers
+- Setup verification
+- Tokenizer fixes
+- Model patching
+
+**`archive/`** - Legacy code (deprecated, for reference only)
+
+**`uploads/`** and **`outputs/`** - Data directories (git-ignored)
+
+For detailed structure information, see the [Project Structure Documentation](docs/PROJECT_REVIEW.md).
 
 ## Technologies Used
 

@@ -5,8 +5,10 @@ This script provides better output visibility
 import sys
 import os
 
-# Add current directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add parent directory to path (so we can import from root)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+sys.path.insert(0, parent_dir)
 
 if __name__ == '__main__':
     print("=" * 60)
@@ -20,8 +22,10 @@ if __name__ == '__main__':
     print()
     
     try:
-        from app import app
-        app.run(debug=True, host='0.0.0.0', port=5000)
+        # Change to parent directory and import app
+        os.chdir(parent_dir)
+        import app
+        app.app.run(debug=True, host='0.0.0.0', port=5000)
     except KeyboardInterrupt:
         print("\n\nServer stopped by user")
     except Exception as e:

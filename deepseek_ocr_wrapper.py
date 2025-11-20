@@ -88,7 +88,11 @@ class DeepSeekOCR:
             
             # Patch model code before loading (fix compatibility issues)
             try:
-                from patch_deepseek_model import patch_model_code
+                # Try importing from scripts directory first, then root (for backward compatibility)
+                try:
+                    from scripts.patch_deepseek_model import patch_model_code
+                except ImportError:
+                    from patch_deepseek_model import patch_model_code
                 patch_model_code()
             except:
                 pass  # Patch is optional
@@ -183,7 +187,11 @@ class DeepSeekOCR:
             
             # Try to patch after tokenizer loads (model files are now downloaded)
             try:
-                from patch_deepseek_model import patch_model_code
+                # Try importing from scripts directory first, then root (for backward compatibility)
+                try:
+                    from scripts.patch_deepseek_model import patch_model_code
+                except ImportError:
+                    from patch_deepseek_model import patch_model_code
                 patch_model_code()
             except:
                 pass  # Patch is optional
@@ -310,6 +318,8 @@ class DeepSeekOCR:
                 
                 # Create a temporary directory for output (model may need it)
                 temp_output_dir = tempfile.mkdtemp(prefix='deepseek_ocr_')
+                original_result = None  # Initialize for bbox extraction
+                saved_json_data = None  # Initialize for JSON bbox data
                 
                 try:
                     # Call infer method - output_path should be a directory string, not None
@@ -328,6 +338,39 @@ class DeepSeekOCR:
                     )
                     print(f"   DEBUG: Inference result type: {type(result)}")
                     print(f"   DEBUG: Inference result value: {str(result)[:200] if result is not None else 'None'}")
+                    
+                    # 🔍 DEBUG: DeepSeek Model Output Structure
+                    print("\n" + "="*60)
+                    print("🔍 DEBUG: DeepSeek Model Output Structure")
+                    print("="*60)
+                    print(f"Type: {type(result)}")
+                    
+                    if isinstance(result, dict):
+                        print(f"Keys: {list(result.keys())}")
+                        # Show first item structure
+                        for key, value in list(result.items())[:5]:
+                            value_str = str(value)
+                            if len(value_str) > 200:
+                                value_str = value_str[:200] + "..."
+                            print(f"  {key}: {type(value)} - {value_str}")
+                            
+                    elif isinstance(result, list) and len(result) > 0:
+                        print(f"List length: {len(result)}")
+                        print(f"First item type: {type(result[0])}")
+                        if isinstance(result[0], dict):
+                            print(f"First item keys: {list(result[0].keys())}")
+                            for key, value in list(result[0].items())[:5]:
+                                value_str = str(value)
+                                if len(value_str) > 200:
+                                    value_str = value_str[:200] + "..."
+                                print(f"  {key}: {type(value)} - {value_str}")
+                        else:
+                            print(f"First item: {result[0]}")
+                    elif isinstance(result, str):
+                        print(f"String length: {len(result)}")
+                        print(f"First 500 chars: {result[:500]}")
+                    
+                    print("="*60 + "\n")
                     
                     # Check if output files were created (even if result is None or "None")
                     output_files = []
@@ -353,6 +396,32 @@ class DeepSeekOCR:
                     
                     if output_files:
                         print(f"   DEBUG: Found {len(output_files)} potential output files")
+                        # 🔍 DEBUG: Check for JSON files that might contain bbox data
+                        json_files = [f for f in output_files if f.endswith('.json')]
+                        if json_files:
+                            print(f"   🔍 DEBUG: Found {len(json_files)} JSON files - checking for bbox data...")
+                            for json_file in json_files:
+                                try:
+                                    import json
+                                    with open(json_file, 'r', encoding='utf-8', errors='ignore') as f:
+                                        json_data = json.load(f)
+                                        print(f"   🔍 DEBUG: JSON file structure: {type(json_data)}")
+                                        if isinstance(json_data, dict):
+                                            print(f"   🔍 DEBUG: JSON keys: {list(json_data.keys())}")
+                                            # Look for bbox-related keys
+                                            bbox_keys = [k for k in json_data.keys() if 'bbox' in k.lower() or 'box' in k.lower() or 'coord' in k.lower()]
+                                            if bbox_keys:
+                                                print(f"   🔍 DEBUG: Found bbox-related keys: {bbox_keys}")
+                                        elif isinstance(json_data, list) and len(json_data) > 0:
+                                            print(f"   🔍 DEBUG: JSON is list with {len(json_data)} items")
+                                            if isinstance(json_data[0], dict):
+                                                print(f"   🔍 DEBUG: First item keys: {list(json_data[0].keys())}")
+                                                bbox_keys = [k for k in json_data[0].keys() if 'bbox' in k.lower() or 'box' in k.lower() or 'coord' in k.lower()]
+                                                if bbox_keys:
+                                                    print(f"   🔍 DEBUG: Found bbox-related keys: {bbox_keys}")
+                                except Exception as json_err:
+                                    print(f"   DEBUG: Could not parse JSON file {json_file}: {json_err}")
+                        
                         # Try to read text from output files (prioritize .md and .txt)
                         output_files.sort(key=lambda x: (x.endswith('.md'), x.endswith('.txt'), x.endswith('.json')))
                         for output_file in output_files:
@@ -382,7 +451,24 @@ class DeepSeekOCR:
                     
                     print("   OK: Inference completed")
                     
-                    # Cleanup temp directory after reading
+                    # Store original result before text extraction
+                    original_result = result
+                    
+                    # Check for JSON files with bbox data before cleanup
+                    if os.path.exists(temp_output_dir):
+                        json_files = [f for f in os.listdir(temp_output_dir) if f.endswith('.json')]
+                        for json_file in json_files:
+                            try:
+                                import json
+                                json_path = os.path.join(temp_output_dir, json_file)
+                                with open(json_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    saved_json_data = json.load(f)
+                                    print(f"   🔍 DEBUG: Loaded JSON from {json_file} for bbox extraction")
+                                    break
+                            except Exception as json_err:
+                                print(f"   DEBUG: Could not load JSON {json_file}: {json_err}")
+                    
+                    # Cleanup temp directory after reading JSON (if any)
                     try:
                         shutil.rmtree(temp_output_dir, ignore_errors=True)
                     except:
@@ -430,6 +516,9 @@ class DeepSeekOCR:
                 print("   Extracting text from result...")
                 markdown_output = None
                 full_text = None
+                
+                # Preserve original result for bbox extraction
+                original_result = result
                 
                 # Try to decode if result is token IDs (tensor or list)
                 if result is not None:
@@ -518,16 +607,160 @@ class DeepSeekOCR:
                     "deepseek-ai/DeepSeek-OCR"
                 )
             
-            # Create structured data
-            lines = full_text.split('\n') if full_text else []
-            structured_data = [
-                {
-                    'text': line,
-                    'confidence': 0.95,
-                    'bbox': [0, 0, 0, 0]
-                }
-                for line in lines if line.strip()
-            ]
+            # Helper function to extract bbox from various formats
+            def extract_bbox(item, default_bbox=[0, 0, 0, 0]):
+                """
+                Extract [x1, y1, x2, y2] from model output item
+                Supports multiple bbox formats
+                """
+                if item is None:
+                    return default_bbox
+                
+                # Try common field names
+                bbox_data = None
+                if isinstance(item, dict):
+                    bbox_data = (item.get('bbox') or item.get('box') or 
+                                item.get('quad_box') or item.get('geometry') or
+                                item.get('coordinates') or item.get('bounding_box') or
+                                item.get('rect') or item.get('region'))
+                elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                    # Might be [text, bbox] or [x1, y1, x2, y2]
+                    if len(item) == 4 and all(isinstance(x, (int, float)) for x in item):
+                        return [int(x) for x in item]
+                    elif len(item) == 2 and isinstance(item[1], (list, tuple)):
+                        bbox_data = item[1]
+                
+                if bbox_data is None:
+                    return default_bbox
+                
+                # Handle different bbox formats
+                if isinstance(bbox_data, (list, tuple)):
+                    if len(bbox_data) == 4 and all(isinstance(x, (int, float)) for x in bbox_data):
+                        # Format: [x1, y1, x2, y2]
+                        return [int(x) for x in bbox_data]
+                    elif len(bbox_data) == 4 and isinstance(bbox_data[0], (list, tuple)):
+                        # Format: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]] (quadrilateral)
+                        xs = [p[0] for p in bbox_data if isinstance(p, (list, tuple)) and len(p) >= 2]
+                        ys = [p[1] for p in bbox_data if isinstance(p, (list, tuple)) and len(p) >= 2]
+                        if xs and ys:
+                            return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+                    elif len(bbox_data) == 2:
+                        # Format: [width, height] - not enough info, return default
+                        return default_bbox
+                
+                # If bbox_data is a dict with x, y, width, height
+                if isinstance(bbox_data, dict):
+                    x = bbox_data.get('x', bbox_data.get('left', bbox_data.get('x1', 0)))
+                    y = bbox_data.get('y', bbox_data.get('top', bbox_data.get('y1', 0)))
+                    w = bbox_data.get('width', bbox_data.get('w', 0))
+                    h = bbox_data.get('height', bbox_data.get('h', 0))
+                    if w > 0 and h > 0:
+                        return [int(x), int(y), int(x + w), int(y + h)]
+                
+                return default_bbox
+            
+            # Try to extract structured data with bboxes from model output
+            structured_data = []
+            raw_result_for_bbox = original_result  # Use original result before text extraction
+            
+            # saved_json_data is already loaded in the try block above (if JSON files exist)
+            # Try to extract from saved JSON first (most likely to have bboxes)
+            if saved_json_data:
+                if isinstance(saved_json_data, dict):
+                    # Check for structured_data, blocks, regions
+                    for key in ['structured_data', 'blocks', 'regions', 'text_blocks', 'ocr_results']:
+                        if key in saved_json_data:
+                            items = saved_json_data[key]
+                            if isinstance(items, list):
+                                for item in items:
+                                    if isinstance(item, dict):
+                                        text = item.get('text', item.get('content', item.get('label', '')))
+                                        if text:
+                                            structured_data.append({
+                                                'text': text,
+                                                'confidence': float(item.get('confidence', item.get('score', 0.95))),
+                                                'bbox': extract_bbox(item)
+                                            })
+                                if structured_data:
+                                    print(f"   ✅ Extracted {len(structured_data)} blocks from JSON {key}")
+                                    break
+                elif isinstance(saved_json_data, list):
+                    # JSON is a list of items
+                    for item in saved_json_data:
+                        if isinstance(item, dict):
+                            text = item.get('text', item.get('content', item.get('label', '')))
+                            if text:
+                                structured_data.append({
+                                    'text': text,
+                                    'confidence': float(item.get('confidence', item.get('score', 0.95))),
+                                    'bbox': extract_bbox(item)
+                                })
+                    if structured_data:
+                        print(f"   ✅ Extracted {len(structured_data)} blocks from JSON list")
+            
+            # Check if result contains structured data
+            if isinstance(raw_result_for_bbox, dict):
+                # Check for structured_data key
+                if 'structured_data' in raw_result_for_bbox:
+                    structured_items = raw_result_for_bbox['structured_data']
+                    if isinstance(structured_items, list):
+                        for item in structured_items:
+                            if isinstance(item, dict):
+                                text = item.get('text', item.get('content', ''))
+                                if text:
+                                    structured_data.append({
+                                        'text': text,
+                                        'confidence': float(item.get('confidence', item.get('score', 0.95))),
+                                        'bbox': extract_bbox(item)
+                                    })
+                # Check for blocks, regions, or text_blocks
+                elif 'blocks' in raw_result_for_bbox:
+                    for block in raw_result_for_bbox['blocks']:
+                        if isinstance(block, dict):
+                            text = block.get('text', block.get('content', ''))
+                            if text:
+                                structured_data.append({
+                                    'text': text,
+                                    'confidence': float(block.get('confidence', block.get('score', 0.95))),
+                                    'bbox': extract_bbox(block)
+                                })
+                elif 'regions' in raw_result_for_bbox:
+                    for region in raw_result_for_bbox['regions']:
+                        if isinstance(region, dict):
+                            text = region.get('text', region.get('content', ''))
+                            if text:
+                                structured_data.append({
+                                    'text': text,
+                                    'confidence': float(region.get('confidence', region.get('score', 0.95))),
+                                    'bbox': extract_bbox(region)
+                                })
+            
+            # If no structured data found, fall back to line-based extraction
+            if not structured_data:
+                lines = full_text.split('\n') if full_text else []
+                structured_data = [
+                    {
+                        'text': line,
+                        'confidence': 0.95,
+                        'bbox': [0, 0, 0, 0]  # No bbox available from text-only output
+                    }
+                    for line in lines if line.strip()
+                ]
+                print("   ⚠️  WARNING: No structured data with bboxes found - using text-only extraction")
+            
+            # Validate bboxes and log statistics
+            valid_bboxes = sum(1 for item in structured_data if item['bbox'] != [0, 0, 0, 0])
+            total_blocks = len(structured_data)
+            if total_blocks > 0:
+                bbox_percentage = (valid_bboxes / total_blocks) * 100
+                print(f"   📊 Bbox Statistics: {valid_bboxes}/{total_blocks} valid bounding boxes ({bbox_percentage:.1f}%)")
+                if valid_bboxes > 0:
+                    # Show sample bbox
+                    sample_bbox = next((item['bbox'] for item in structured_data if item['bbox'] != [0, 0, 0, 0]), None)
+                    if sample_bbox:
+                        print(f"   📊 Sample bbox: {sample_bbox}")
+            else:
+                print("   ⚠️  WARNING: No structured data blocks extracted")
             
             # Create metadata
             metadata = {

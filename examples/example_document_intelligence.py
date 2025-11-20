@@ -6,6 +6,14 @@ Demonstrates:
 2. Metadata extraction
 3. Research paper structuring
 """
+import sys
+import os
+
+# Add parent directory to path (so we can import from root)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+sys.path.insert(0, parent_dir)
+
 from PIL import Image
 from app.processors.document_classifier import DocumentClassifier
 from app.processors.metadata_extractor import MetadataExtractor

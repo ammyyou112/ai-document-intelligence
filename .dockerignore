@@ -1,0 +1,65 @@
+# DeepSeek-OCR upstream repository (large, not needed in container)
+DeepSeek-OCR/DeepSeek-OCR-master/
+
+# Examples (not needed in production)
+examples/
+
+# Archive (legacy code)
+archive/
+
+# Virtual environment
+venv/
+.venv/
+ENV/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Uploads (user data, not needed in image)
+uploads/*.pdf
+uploads/*.png
+uploads/*.jpg
+uploads/*.jpeg
+
+# Outputs (generated files)
+outputs/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+config.env
+
+# Logs
+*.log
+app_output.log
+
+# Git
+.git/
+.gitignore
+
+# Documentation (optional, can include if needed)
+# README*.md
+
+# Scripts (optional, can include if needed)
+# scripts/
+
+# Test files
+test_*.py
+*_test.py
+
+# Backup files
+backup-*.tar.gz
+
