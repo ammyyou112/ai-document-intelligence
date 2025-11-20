@@ -7,6 +7,7 @@ import sys
 import tempfile
 import shutil
 import re
+import io
 from typing import Dict, List, Optional
 from PIL import Image
 import torch
@@ -101,6 +102,8 @@ class DeepSeekOCR:
             model_name: HuggingFace model name
             device: Device to run on ('cuda' or 'cpu')
         """
+        # Initialize attribute for captured stdout output (contains bbox tags)
+        self._raw_output_with_bboxes = None
         if not TRANSFORMERS_AVAILABLE:
             raise ImportError(
                 "transformers library is required. "
@@ -385,17 +388,45 @@ class DeepSeekOCR:
                     # Call infer method - output_path should be a directory string, not None
                     # Note: Even with save_results=False, the model might save files, so we check for them
                     print(f"   Calling model.infer() with output_path: {temp_output_dir}")
-                    result = self.model.infer(
-                        self.tokenizer,
-                        prompt=prompt,
-                        image_file=image_path,
-                        output_path=temp_output_dir,  # Use temp directory instead of None
-                        base_size=base_size,
-                        image_size=image_size,
-                        crop_mode=crop_mode,
-                        save_results=True,  # Set to True to ensure we can read results from files if needed
-                        test_compress=False
-                    )
+                    
+                    # 🔍 CRITICAL: Capture stdout to get raw output with bbox tags
+                    # DeepSeek model prints bbox output to STDOUT but may return None
+                    old_stdout = sys.stdout
+                    sys.stdout = captured_output = io.StringIO()
+                    
+                    try:
+                        result = self.model.infer(
+                            self.tokenizer,
+                            prompt=prompt,
+                            image_file=image_path,
+                            output_path=temp_output_dir,  # Use temp directory instead of None
+                            base_size=base_size,
+                            image_size=image_size,
+                            crop_mode=crop_mode,
+                            save_results=True,  # Set to True to ensure we can read results from files if needed
+                            test_compress=False
+                        )
+                    finally:
+                        # Restore stdout immediately
+                        sys.stdout = old_stdout
+                    
+                    # Get the captured output
+                    raw_output_with_bboxes = captured_output.getvalue()
+                    captured_output.close()
+                    
+                    # Store captured output for bbox parsing
+                    self._raw_output_with_bboxes = raw_output_with_bboxes if raw_output_with_bboxes.strip() else None
+                    
+                    # Log what we captured
+                    print(f"   DEBUG: Captured {len(raw_output_with_bboxes)} chars from stdout")
+                    if '<|ref|>' in raw_output_with_bboxes:
+                        print(f"   ✅ Found bbox tags in captured stdout!")
+                        print(f"   DEBUG: Captured output preview: {raw_output_with_bboxes[:300]}...")
+                    else:
+                        print(f"   ⚠️  No bbox tags in captured stdout")
+                        if raw_output_with_bboxes:
+                            print(f"   DEBUG: Captured output preview: {raw_output_with_bboxes[:200]}...")
+                    
                     print(f"   DEBUG: Inference result type: {type(result)}")
                     print(f"   DEBUG: Inference result value: {str(result)[:200] if result is not None else 'None'}")
                     
@@ -852,13 +883,18 @@ class DeepSeekOCR:
                                 })
             
             # If no structured data found, try parsing DeepSeek's special bbox format from text
-            # CRITICAL: Use preserved_raw_output if available (contains bbox tags), otherwise use full_text
+            # CRITICAL: Use captured stdout output (has bbox tags) if available, otherwise try preserved_raw_output or full_text
             text_for_bbox_parsing = None
             
-            # Check if we preserved raw output with tags (from try block)
-            if preserved_raw_output:
+            # Priority 1: Use captured stdout output (most reliable source for bbox tags)
+            if hasattr(self, '_raw_output_with_bboxes') and self._raw_output_with_bboxes:
+                text_for_bbox_parsing = self._raw_output_with_bboxes
+                print("   🔍 Using raw captured stdout output with bbox tags for parsing...")
+            # Priority 2: Use preserved raw output from files
+            elif 'preserved_raw_output' in locals() and preserved_raw_output:
                 text_for_bbox_parsing = preserved_raw_output
                 print("   🔍 Using preserved raw output with bbox tags for parsing...")
+            # Priority 3: Fallback to processed full_text (may not have tags)
             elif full_text:
                 text_for_bbox_parsing = full_text
                 print("   🔍 Using processed full_text for parsing (may not have tags)...")
