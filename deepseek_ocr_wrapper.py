@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import shutil
+import re
 from typing import Dict, List, Optional
 from PIL import Image
 import torch
@@ -13,6 +14,49 @@ from dotenv import load_dotenv
 
 # Load environment variables early
 load_dotenv()
+
+def parse_deepseek_bbox_format(text_output: str) -> List[Dict]:
+    """
+    Parse DeepSeek's special bbox format from text output.
+    
+    Format: <|ref|>type<|/ref|><|det|>[[x1, y1, x2, y2]]<|/det|>\ntext content
+    
+    Returns: List of dicts with {text, bbox, type, confidence}
+    """
+    structured_items = []
+    
+    if not text_output or not isinstance(text_output, str):
+        return structured_items
+    
+    # Regex pattern to match DeepSeek format
+    # Pattern: <|ref|>type<|/ref|><|det|>[[x1, y1, x2, y2]]<|/det|>\ntext content
+    # Example: <|ref|>title<|/ref|><|det|>[[285, 88, 680, 110]]<|/det|>\n# NASA Contractor Report 172321
+    pattern = r'<\|ref\|>(.*?)<\|/ref\|><\|det\|>\[\[([\d,\s]+)\]\]<\|/det\|>\s*\n((?:(?!<\|ref\|>).)*?)(?=<\|ref\|>|$)'
+    
+    matches = re.finditer(pattern, text_output, re.DOTALL | re.MULTILINE)
+    
+    for match in matches:
+        element_type = match.group(1).strip()
+        bbox_str = match.group(2).strip()
+        text_content = match.group(3).strip()
+        
+        # Parse bbox coordinates [x1, y1, x2, y2]
+        try:
+            coords = [int(x.strip()) for x in bbox_str.split(',')]
+            bbox = coords if len(coords) == 4 else [0, 0, 0, 0]
+        except (ValueError, IndexError):
+            bbox = [0, 0, 0, 0]
+        
+        # Only add if has text
+        if text_content:
+            structured_items.append({
+                'text': text_content,
+                'bbox': bbox,
+                'type': element_type,
+                'confidence': 0.95
+            })
+    
+    return structured_items
 
 # Try to import transformers
 try:
@@ -735,18 +779,41 @@ class DeepSeekOCR:
                                     'bbox': extract_bbox(region)
                                 })
             
-            # If no structured data found, fall back to line-based extraction
+            # If no structured data found, try parsing DeepSeek's special bbox format from text
+            if not structured_data and full_text:
+                print("   🔍 Parsing DeepSeek bbox format from text output...")
+                structured_data = parse_deepseek_bbox_format(full_text)
+                
+                if structured_data:
+                    valid_bboxes = sum(1 for item in structured_data if item['bbox'] != [0, 0, 0, 0])
+                    total_parsed = len(structured_data)
+                    if total_parsed > 0:
+                        bbox_percentage = (valid_bboxes / total_parsed) * 100
+                        print(f"   ✅ Successfully parsed {total_parsed} items from DeepSeek format")
+                        print(f"   📊 Bbox Statistics: {valid_bboxes}/{total_parsed} valid bounding boxes ({bbox_percentage:.1f}%)")
+                        
+                        if valid_bboxes > 0:
+                            sample = structured_data[0]
+                            print(f"   📊 Sample: '{sample['text'][:40]}...' bbox={sample['bbox']} type={sample.get('type', 'unknown')}")
+                        else:
+                            print("   ⚠️  No valid bboxes found in parsed data")
+                else:
+                    print("   ⚠️  Could not parse DeepSeek format - using fallback")
+            
+            # Final fallback: line-based extraction (if still no structured data)
             if not structured_data:
                 lines = full_text.split('\n') if full_text else []
                 structured_data = [
                     {
-                        'text': line,
-                        'confidence': 0.95,
-                        'bbox': [0, 0, 0, 0]  # No bbox available from text-only output
+                        'text': line.strip(),
+                        'bbox': [0, 0, 0, 0],
+                        'confidence': 0.0,
+                        'type': 'text'
                     }
-                    for line in lines if line.strip()
+                    for line in lines
+                    if line.strip() and not line.strip().startswith('<|')
                 ]
-                print("   ⚠️  WARNING: No structured data with bboxes found - using text-only extraction")
+                print("   ⚠️  WARNING: Using text-only extraction (no bboxes available)")
             
             # Validate bboxes and log statistics
             valid_bboxes = sum(1 for item in structured_data if item['bbox'] != [0, 0, 0, 0])
