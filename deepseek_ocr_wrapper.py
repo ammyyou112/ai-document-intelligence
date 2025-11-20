@@ -17,37 +17,46 @@ load_dotenv()
 
 def parse_deepseek_bbox_format(text_output: str) -> List[Dict]:
     """
-    Parse DeepSeek's special bbox format from text output.
+    Parse DeepSeek's bbox format from text output.
     
-    Format: <|ref|>type<|/ref|><|det|>[[x1, y1, x2, y2]]<|/det|>\ntext content
+    Format: <|ref|>type<|/ref|><|det|>[[x1, y1, x2, y2]]<|/det|>
+    text content
     
     Returns: List of dicts with {text, bbox, type, confidence}
     """
+    import re
+    
     structured_items = []
     
     if not text_output or not isinstance(text_output, str):
         return structured_items
     
-    # Regex pattern to match DeepSeek format
-    # Pattern: <|ref|>type<|/ref|><|det|>[[x1, y1, x2, y2]]<|/det|>\ntext content
-    # Example: <|ref|>title<|/ref|><|det|>[[285, 88, 680, 110]]<|/det|>\n# NASA Contractor Report 172321
-    pattern = r'<\|ref\|>(.*?)<\|/ref\|><\|det\|>\[\[([\d,\s]+)\]\]<\|/det\|>\s*\n((?:(?!<\|ref\|>).)*?)(?=<\|ref\|>|$)'
+    # Split by the ref/det pattern to find sections
+    # Pattern matches: <|ref|>TYPE<|/ref|><|det|>[[COORDS]]<|/det|>
+    pattern = r'<\|ref\|>([^<]+)<\|/ref\|><\|det\|>\[\[([^\]]+)\]\]<\|/det\|>\s*\n([^\n<]+)'
     
-    matches = re.finditer(pattern, text_output, re.DOTALL | re.MULTILINE)
+    matches = re.finditer(pattern, text_output, re.MULTILINE)
     
+    found_count = 0
     for match in matches:
+        found_count += 1
         element_type = match.group(1).strip()
         bbox_str = match.group(2).strip()
         text_content = match.group(3).strip()
         
-        # Parse bbox coordinates [x1, y1, x2, y2]
+        # Parse bbox coordinates
         try:
+            # Handle malformed bboxes like "[291, 777, 481, 940]]" (missing one [)
+            bbox_str = bbox_str.replace('[', '').replace(']', '')
             coords = [int(x.strip()) for x in bbox_str.split(',')]
-            bbox = coords if len(coords) == 4 else [0, 0, 0, 0]
-        except (ValueError, IndexError):
+            
+            if len(coords) == 4:
+                bbox = coords
+            else:
+                bbox = [0, 0, 0, 0]
+        except (ValueError, IndexError) as e:
             bbox = [0, 0, 0, 0]
         
-        # Only add if has text
         if text_content:
             structured_items.append({
                 'text': text_content,
@@ -55,6 +64,12 @@ def parse_deepseek_bbox_format(text_output: str) -> List[Dict]:
                 'type': element_type,
                 'confidence': 0.95
             })
+    
+    # Log parsing results
+    if found_count > 0:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"   ✅ Regex matched {found_count} items from DeepSeek output")
     
     return structured_items
 
@@ -782,6 +797,13 @@ class DeepSeekOCR:
             # If no structured data found, try parsing DeepSeek's special bbox format from text
             if not structured_data and full_text:
                 print("   🔍 Parsing DeepSeek bbox format from text output...")
+                
+                # Debug: show what we're trying to parse
+                lines_with_tags = [line for line in full_text.split('\n') if '<|ref|>' in line]
+                print(f"   DEBUG: Found {len(lines_with_tags)} lines with <|ref|> tags")
+                if lines_with_tags:
+                    print(f"   DEBUG: First tagged line: {lines_with_tags[0][:100]}")
+                
                 structured_data = parse_deepseek_bbox_format(full_text)
                 
                 if structured_data:
