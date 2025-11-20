@@ -379,6 +379,7 @@ class DeepSeekOCR:
                 temp_output_dir = tempfile.mkdtemp(prefix='deepseek_ocr_')
                 original_result = None  # Initialize for bbox extraction
                 saved_json_data = None  # Initialize for JSON bbox data
+                preserved_raw_output = None  # Initialize for raw output with bbox tags
                 
                 try:
                     # Call infer method - output_path should be a directory string, not None
@@ -397,6 +398,42 @@ class DeepSeekOCR:
                     )
                     print(f"   DEBUG: Inference result type: {type(result)}")
                     print(f"   DEBUG: Inference result value: {str(result)[:200] if result is not None else 'None'}")
+                    
+                    # 🔍 CRITICAL: Capture raw output with bbox tags BEFORE any processing
+                    raw_output_with_tags = None
+                    
+                    # Check if result itself contains tags (might be string with tags)
+                    if isinstance(result, str) and '<|ref|>' in result:
+                        raw_output_with_tags = result
+                        print(f"   ✅ Found bbox tags in model.infer() return value!")
+                    elif result is not None:
+                        # Try to convert to string and check
+                        result_str = str(result)
+                        if '<|ref|>' in result_str:
+                            raw_output_with_tags = result_str
+                            print(f"   ✅ Found bbox tags in result string representation!")
+                    
+                    # Also check output files for raw content with tags (before cleanup)
+                    if not raw_output_with_tags and os.path.exists(temp_output_dir):
+                        # Check all text files for raw output with tags
+                        import glob
+                        for file_path in glob.glob(os.path.join(temp_output_dir, '*')):
+                            try:
+                                if os.path.isfile(file_path):
+                                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                        file_content = f.read()
+                                        if '<|ref|>' in file_content:
+                                            raw_output_with_tags = file_content
+                                            print(f"   ✅ Found bbox tags in output file: {os.path.basename(file_path)}")
+                                            break
+                            except Exception:
+                                pass
+                    
+                    if raw_output_with_tags:
+                        print(f"   🔍 DEBUG: Raw output length: {len(raw_output_with_tags)} chars")
+                        print(f"   🔍 DEBUG: Raw output preview: {raw_output_with_tags[:200]}...")
+                    else:
+                        print(f"   ⚠️  No bbox tags found in raw output - will check processed text later")
                     
                     # 🔍 DEBUG: DeepSeek Model Output Structure
                     print("\n" + "="*60)
@@ -513,6 +550,11 @@ class DeepSeekOCR:
                     # Store original result before text extraction
                     original_result = result
                     
+                    # Preserve raw_output_with_tags for bbox parsing (before cleanup)
+                    # This will be used later for parsing bboxes from the raw output
+                    if 'raw_output_with_tags' in locals() and raw_output_with_tags:
+                        preserved_raw_output = raw_output_with_tags
+                    
                     # Check for JSON files with bbox data before cleanup
                     if os.path.exists(temp_output_dir):
                         json_files = [f for f in os.listdir(temp_output_dir) if f.endswith('.json')]
@@ -527,7 +569,22 @@ class DeepSeekOCR:
                             except Exception as json_err:
                                 print(f"   DEBUG: Could not load JSON {json_file}: {json_err}")
                     
-                    # Cleanup temp directory after reading JSON (if any)
+                    # Also check for raw text files with tags before cleanup
+                    if not preserved_raw_output and os.path.exists(temp_output_dir):
+                        import glob
+                        for file_path in glob.glob(os.path.join(temp_output_dir, '*')):
+                            try:
+                                if os.path.isfile(file_path) and not file_path.endswith('.json'):
+                                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                        file_content = f.read()
+                                        if '<|ref|>' in file_content:
+                                            preserved_raw_output = file_content
+                                            print(f"   ✅ Found raw output with bbox tags in: {os.path.basename(file_path)}")
+                                            break
+                            except Exception:
+                                pass
+                    
+                    # Cleanup temp directory after reading (but preserve raw_output)
                     try:
                         shutil.rmtree(temp_output_dir, ignore_errors=True)
                     except:
@@ -795,16 +852,29 @@ class DeepSeekOCR:
                                 })
             
             # If no structured data found, try parsing DeepSeek's special bbox format from text
-            if not structured_data and full_text:
+            # CRITICAL: Use preserved_raw_output if available (contains bbox tags), otherwise use full_text
+            text_for_bbox_parsing = None
+            
+            # Check if we preserved raw output with tags (from try block)
+            if preserved_raw_output:
+                text_for_bbox_parsing = preserved_raw_output
+                print("   🔍 Using preserved raw output with bbox tags for parsing...")
+            elif full_text:
+                text_for_bbox_parsing = full_text
+                print("   🔍 Using processed full_text for parsing (may not have tags)...")
+            
+            if not structured_data and text_for_bbox_parsing:
                 print("   🔍 Parsing DeepSeek bbox format from text output...")
                 
                 # Debug: show what we're trying to parse
-                lines_with_tags = [line for line in full_text.split('\n') if '<|ref|>' in line]
+                lines_with_tags = [line for line in text_for_bbox_parsing.split('\n') if '<|ref|>' in line]
                 print(f"   DEBUG: Found {len(lines_with_tags)} lines with <|ref|> tags")
                 if lines_with_tags:
                     print(f"   DEBUG: First tagged line: {lines_with_tags[0][:100]}")
+                else:
+                    print(f"   ⚠️  WARNING: No <|ref|> tags found in text - bbox parsing will fail")
                 
-                structured_data = parse_deepseek_bbox_format(full_text)
+                structured_data = parse_deepseek_bbox_format(text_for_bbox_parsing)
                 
                 if structured_data:
                     valid_bboxes = sum(1 for item in structured_data if item['bbox'] != [0, 0, 0, 0])
