@@ -58,13 +58,14 @@ class HybridOCRRouter:
     """Routes documents to appropriate OCR engine based on complexity"""
     
     def __init__(self, 
-                 complexity_threshold: float = 0.7,
+                 complexity_threshold: float = 0.5,  # Lowered from 0.7 - allow routing to simple with lower confidence
                  force_engine: Optional[str] = None):
         """
         Initialize the hybrid router
         
         Args:
             complexity_threshold: Confidence threshold for routing decision (0.0-1.0)
+                                 Lowered to 0.5 to allow simple pages with moderate confidence
             force_engine: Force use of specific engine ('simple' or 'deepseek'), None for auto
         """
         self.complexity_threshold = complexity_threshold
@@ -77,14 +78,21 @@ class HybridOCRRouter:
         
         # Initialize simple OCR engine
         if SimpleOCREngine is None:
-            logger.warning("SimpleOCREngine not available - will only use DeepSeek-OCR")
+            logger.warning("⚠️  SimpleOCREngine not available - will only use DeepSeek-OCR")
             self.simple_engine = None
         else:
             try:
+                logger.info("Initializing SimpleOCR engine (EasyOCR)...")
                 self.simple_engine = SimpleOCREngine()
+                logger.info("✅ SimpleOCR engine initialized successfully")
             except Exception as e:
-                logger.warning(f"Failed to initialize SimpleOCREngine: {e}")
+                logger.warning(f"⚠️  Failed to initialize SimpleOCREngine: {e}")
+                logger.warning("⚠️  All pages will be routed to DeepSeek-OCR")
                 self.simple_engine = None
+        
+        # Verify initialization
+        if not hasattr(self, 'simple_engine') or self.simple_engine is None:
+            logger.warning("⚠️  SimpleOCR not initialized! All pages will use DeepSeek")
         
         # Statistics tracking
         self.stats = {
@@ -142,14 +150,32 @@ class HybridOCRRouter:
                     'timestamp': datetime.now().isoformat()
                 })
                 
-                # Decision logic: use simple if confidence is high and complexity is simple
-                if (complexity_result.complexity == 'simple' and 
-                    complexity_result.confidence >= self.complexity_threshold):
+                # DETAILED LOGGING BEFORE DECISION
+                logger.info(f"   📊 Complexity Analysis Results:")
+                logger.info(f"      Complexity: {complexity_result.complexity}")
+                logger.info(f"      Confidence: {complexity_result.confidence:.2f}")
+                logger.info(f"      Recommended engine: {complexity_result.recommended_engine}")
+                if complexity_result.reasons:
+                    logger.info(f"      Reasons: {', '.join(complexity_result.reasons)}")
+                
+                # Decision logic: use simple if complexity is simple AND (confidence is high OR recommended_engine is simple)
+                # Also check if simple_engine is available
+                should_use_simple = (
+                    complexity_result.complexity == 'simple' and
+                    self.simple_engine is not None and
+                    (complexity_result.confidence >= self.complexity_threshold or 
+                     complexity_result.recommended_engine == 'simple')
+                )
+                
+                if should_use_simple:
                     use_simple = True
-                    logger.info(f"Routing to Simple OCR (confidence: {complexity_result.confidence:.2f})")
+                    logger.info(f"      → Routing to SIMPLE OCR (Fast) - complexity: {complexity_result.complexity}, confidence: {complexity_result.confidence:.2f}")
                 else:
                     use_simple = False
-                    logger.info(f"Routing to DeepSeek OCR (complexity: {complexity_result.complexity}, confidence: {complexity_result.confidence:.2f})")
+                    if self.simple_engine is None:
+                        logger.warning(f"      ⚠️  SimpleOCR not available! Routing to DeepSeek")
+                    else:
+                        logger.info(f"      → Routing to DeepSeek OCR (Complex) - complexity: {complexity_result.complexity}, confidence: {complexity_result.confidence:.2f}")
             
             # Step 2: Process with selected engine
             if use_simple and self.simple_engine is not None:
