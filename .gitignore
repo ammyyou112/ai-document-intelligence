@@ -144,3 +144,8 @@ examples/__pycache__/
 # Scripts cache
 scripts/__pycache__/
 
+# Test outputs
+tests/test_*.png
+tests/test_*.json
+tests/__pycache__/
+
