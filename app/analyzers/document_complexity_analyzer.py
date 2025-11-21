@@ -29,17 +29,17 @@ class DocumentComplexityAnalyzer:
     """Analyzes document complexity to determine optimal OCR engine"""
     
     def __init__(self, 
-                 sharpness_threshold: float = 100.0,
-                 noise_threshold: float = 0.1,
-                 table_line_threshold: int = 10,
+                 sharpness_threshold: float = 50.0,  # Lowered from 100.0 - less strict
+                 noise_threshold: float = 0.2,  # Increased from 0.1 - less strict
+                 table_line_threshold: int = 20,  # Increased from 10 - require more lines for table
                  column_threshold: float = 0.3):
         """
         Initialize the analyzer with configurable thresholds
         
         Args:
-            sharpness_threshold: Minimum Laplacian variance for sharp image
-            noise_threshold: Maximum noise ratio for clean image
-            table_line_threshold: Minimum lines detected to consider as table
+            sharpness_threshold: Minimum Laplacian variance for sharp image (lowered for less strict)
+            noise_threshold: Maximum noise ratio for clean image (increased for less strict)
+            table_line_threshold: Minimum lines detected to consider as table (increased for less strict)
             column_threshold: Minimum column ratio to consider multi-column layout
         """
         self.sharpness_threshold = sharpness_threshold
@@ -80,9 +80,20 @@ class DocumentComplexityAnalyzer:
             # Recommend engine
             recommended_engine = 'deepseek' if complexity == 'complex' else 'simple'
             
-            logger.info(f"Complexity analysis: {complexity} (confidence: {confidence:.2f})")
-            logger.debug(f"Metrics: {all_metrics}")
-            logger.debug(f"Reasons: {reasons}")
+            # DETAILED LOGGING
+            logger.info(f"📊 Complexity Analysis:")
+            logger.info(f"   Image quality: sharpness={all_metrics.get('sharpness', 0):.1f}, noise={all_metrics.get('noise_level', 0):.3f}, contrast={all_metrics.get('contrast', 0):.3f}")
+            logger.info(f"   Sharpness: {all_metrics.get('is_sharp', 0):.1f} (threshold: {self.sharpness_threshold})")
+            logger.info(f"   Has tables: {all_metrics.get('has_tables', 0):.1f} ({int(all_metrics.get('num_table_lines', 0))} lines, threshold: {self.table_line_threshold})")
+            logger.info(f"   Has formulas: {all_metrics.get('has_formulas', 0):.1f} ({int(all_metrics.get('num_small_regions', 0))} small regions)")
+            logger.info(f"   Has diagrams: {all_metrics.get('has_diagrams', 0):.1f} ({int(all_metrics.get('num_large_regions', 0))} large regions)")
+            logger.info(f"   Layout complexity: multi_column={all_metrics.get('is_multi_column', 0):.1f}, density={all_metrics.get('layout_density', 0):.3f}")
+            logger.info(f"   Complexity score: {complexity_score:.3f}")
+            logger.info(f"   → Decision: {complexity} (confidence: {confidence:.2f})")
+            logger.info(f"   → Recommended engine: {recommended_engine}")
+            if reasons:
+                logger.info(f"   → Reasons: {', '.join(reasons)}")
+            logger.debug(f"Full metrics: {all_metrics}")
             
             return ComplexityResult(
                 complexity=complexity,
@@ -306,7 +317,8 @@ class DocumentComplexityAnalyzer:
                     small_regions += 1
             
             metrics['num_small_regions'] = float(small_regions)
-            metrics['has_formulas'] = 1.0 if small_regions > 50 else 0.0
+            # Increased threshold from 50 to 100 - require more small regions to indicate formulas
+            metrics['has_formulas'] = 1.0 if small_regions > 100 else 0.0
             
             # 3. Diagram detection (look for large non-text regions)
             large_regions = 0
@@ -351,32 +363,56 @@ class DocumentComplexityAnalyzer:
             Complexity score between 0.0 and 1.0
         """
         score = 0.0
-        weights = {
-            # Quality factors (lower quality = more complex)
-            'is_sharp': -0.1,  # Negative: sharp images are simpler
-            'is_clean': -0.1,
-            'has_good_contrast': -0.1,
-            
-            # Layout factors
-            'is_multi_column': 0.2,
-            'layout_density': 0.15,
-            'region_density': 0.1,
-            
-            # Content factors
-            'has_tables': 0.25,
-            'has_formulas': 0.15,
-            'has_diagrams': 0.15,
-            'content_complexity': 0.2
-        }
         
-        for key, weight in weights.items():
-            value = metrics.get(key, 0.0)
-            score += value * weight
+        # Start with base score (assume simple by default)
+        base_score = 0.2  # Start at 0.2 (simple side)
+        
+        # Quality factors (poor quality increases complexity)
+        # Only penalize if quality is ACTUALLY poor (< 0.5 threshold)
+        if metrics.get('is_sharp', 0.0) < 0.5:  # Not sharp
+            score += 0.15  # Add complexity for poor sharpness
+        if metrics.get('is_clean', 0.0) < 0.5:  # Has noise
+            score += 0.10  # Add complexity for noise
+        if metrics.get('has_good_contrast', 0.0) < 0.5:  # Low contrast
+            score += 0.10  # Add complexity for poor contrast
+        
+        # Only mark complex if quality is ACTUALLY poor (combined quality score < 0.5)
+        quality_score = (
+            metrics.get('is_sharp', 0.0) * 0.4 +
+            metrics.get('is_clean', 0.0) * 0.3 +
+            metrics.get('has_good_contrast', 0.0) * 0.3
+        )
+        
+        # Layout factors (only if actually complex)
+        if metrics.get('is_multi_column', 0.0) > 0.5:
+            score += 0.10  # Multi-column adds some complexity
+        if metrics.get('layout_density', 0.0) > 0.8:  # Very dense layout
+            score += 0.05
+        
+        # Content factors (these are the main indicators of complexity)
+        if metrics.get('has_tables', 0.0) > 0.5:
+            score += 0.30  # Tables are complex
+        if metrics.get('has_formulas', 0.0) > 0.5:
+            score += 0.25  # Formulas are complex
+        if metrics.get('has_diagrams', 0.0) > 0.5:
+            score += 0.15  # Diagrams add complexity
+        
+        # Only penalize for poor quality if it's actually poor (< 0.5)
+        # Otherwise, default to simple unless there are complex features
+        if quality_score < 0.5:
+            # Quality is poor - add complexity
+            score += (0.5 - quality_score) * 0.3
+        else:
+            # Quality is good - reduce complexity slightly
+            score -= (quality_score - 0.5) * 0.1
+        
+        # Combine with base score
+        final_score = base_score + score
         
         # Normalize to 0-1 range
-        score = max(0.0, min(1.0, score))
+        final_score = max(0.0, min(1.0, final_score))
         
-        return score
+        return final_score
     
     def _generate_reasons(self, metrics: Dict[str, float], complexity_score: float) -> List[str]:
         """
@@ -391,13 +427,19 @@ class DocumentComplexityAnalyzer:
         """
         reasons = []
         
-        # Quality reasons
-        if metrics.get('is_sharp', 0.0) < 0.5:
-            reasons.append("Low image sharpness detected")
-        if metrics.get('is_clean', 0.0) < 0.5:
-            reasons.append("High noise level detected")
-        if metrics.get('has_good_contrast', 0.0) < 0.5:
-            reasons.append("Low contrast detected")
+        # Quality reasons (only if actually poor)
+        quality_score = (
+            metrics.get('is_sharp', 0.0) * 0.4 +
+            metrics.get('is_clean', 0.0) * 0.3 +
+            metrics.get('has_good_contrast', 0.0) * 0.3
+        )
+        if quality_score < 0.5:  # Only report if quality is actually poor
+            if metrics.get('is_sharp', 0.0) < 0.5:
+                reasons.append(f"Low image sharpness (score: {metrics.get('sharpness', 0):.1f})")
+            if metrics.get('is_clean', 0.0) < 0.5:
+                reasons.append(f"High noise level (score: {metrics.get('noise_level', 0):.3f})")
+            if metrics.get('has_good_contrast', 0.0) < 0.5:
+                reasons.append(f"Low contrast (score: {metrics.get('contrast', 0):.3f})")
         
         # Layout reasons
         if metrics.get('is_multi_column', 0.0) > 0.5:
